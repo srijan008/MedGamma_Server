@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+uuid
+prisma
+python-dotenv
+langchain
+langchain-cohere
+pypdf
+chromadb
+langchain-chroma
+ddgs
+beautifulsoup4
+requests
