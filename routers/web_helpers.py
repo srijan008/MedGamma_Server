@@ -1,5 +1,8 @@
 from .services import llm
-from ddgs import DDGS
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
 import traceback
@@ -45,7 +48,7 @@ def fetch_content(url: str, max_chars: int = 8000) -> str:
         # 6. Basic cleanup (collapsing multiple newlines)
         import re
         text_content = re.sub(r'\n{3,}', '\n\n', text_content)
-        print("text_content", text_content)
+        # print("text_content", text_content)
         return text_content[:max_chars]
     except Exception as e:
         print(f"⚠️ Scraping Failed for {url}: {e}")

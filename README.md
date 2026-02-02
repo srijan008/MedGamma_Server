@@ -1,94 +1,93 @@
-# MedGamma AI Chatbot 🏥🤖
+# MedGamma AI Chatbot 🏥🤖 - Backend
 
-MedGamma is an advanced AI-powered assistant designed for intelligent document analysis, web research, and empathetic health support. It features a unique **Emergency Response System** that automatically detects crisis situations and triggers real-time alerts via Twilio.
+MedGamma's backend is a robust FastAPI application serving an advanced AI assistant capable of RAG (Document Analysis), Web Search, and critical Emergency Response via Twilio.
 
-## ✨ Key Features
-
-### 🧠 Intelligent Chat & RAG
-- **PDF Analysis**: Upload medical (or any) PDFs and ask questions. The AI uses RAG (Retrieval-Augmented Generation) to answer based on the document content.
-- **Web Search**: Integrated DuckDuckGo search for up-to-date information on current events or general queries.
-- **Context Awareness**: Remembers conversation history for seamless follow-up questions.
-
-### 🏥 MedGamma Health Mode
-- **Specialized Persona**: Switch to "Health Mode" for a medical assistant persona.
-- **Supportive Tone**: Optimized for empathy, clarity, and professional disclaimers.
-- **UI Transformation**: distinct visual theme (Emerald Green) to indicate health focus.
-
-### 🚨 AI-Driven Emergency System
-A safety-first mechanism that monitors user distress levels in real-time.
-- **Tiered Response Logic**:
-    - **Medium Distress** (e.g., Self-Harm risk): Triggers **SMS Alert** to emergency contacts.
-    - **Critical Distress** (e.g., Suicide risk): Triggers **Voice Call + SMS Alert**.
-- **Privacy-Focused**: `[SOS]` tokens are used internally for triggers but are hidden from the final user response to maintain a natural conversation flow.
-- **Manual SOS**: A dedicated SOS button is available in the UI for immediate manual triggering.
-
----
+## ✨ Backend Features
+- **FastAPI Core**: High-performance async API.
+- **LangChain & Cohere**: Powered by Cohere's Command R+ models and Embeddings.
+- **ChromaDB**: Vector storage for PDF knowledge retrieval.
+- **Tools System**: Integrated `WebSearchTool` (DuckDuckGo), `EmergencyCallTool`, and `EmergencySmsTool` (Twilio).
+- **Disk Offloading**: Specific optimization for running large Hugging Face models (like MedGemma) on limited hardware.
 
 ## 🛠️ Tech Stack
-
-- **Frontend**: React, Vite, TypeScript, Vanilla CSS (Glassmorphism UI).
-- **Backend**: FastAPI (Python), Uvicorn.
-- **AI/ML**: LangChain, Cohere (LLM & Embeddings), ChromaDB (Vector Store).
-- **Integration**: Twilio (Programmable Voice & Messaging).
-- **Database**: Prisma (SQLite/Postgres).
+- **Python 3.10+**
+- **FastAPI / Uvicorn**
+- **LangChain / LangChain-Cohere**
+- **Twilio** (Voice & SMS)
+- **Hugging Face Transformers** & **Accelerate**
+- **Prisma** (Database ORM)
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Setup & Installation
 
-### Prerequisites
-- Node.js & npm
-- Python 3.10+
-- Twilio Account (SID, Token, Verified Numbers)
-- Cohere API Key
+### 1. Prerequisites
+- Python 3.10 or higher installed.
+- Twilio Account (SID, Auth Token, Verified Numbers).
+- Cohere API Key.
+- Hugging Face Token (for gated models like MedGemma).
 
-### 1. Backend Setup
-
+### 2. Installation
 ```bash
 cd backend
-# Create virtual environment (optional but recommended)
 python -m venv venv
-# Activate venv (Windows: venv\Scripts\activate, Mac/Linux: source venv/bin/activate)
 
-# Install dependencies
+# Activate venv
+# Windows:
+venv\Scripts\activate
+# Mac/Linux:
+source venv/bin/activate
+
+# Install Dependencies
 pip install -r requirements.txt
-pip install twilio cohere langchain-cohere langchain-chroma duckduckgo-search beautifulsoup4
+```
 
-# Setup Environment Variables
-# Create a .env file in /backend and add:
-DATABASE_URL="file:./dev.db"
-COHERE_API_KEY="your_cohere_key"
-CHROMA_API_KEY="your_chroma_key" # If using hosted
-TWILIO_ACCOUNT_SID="your_sid"
+### 3. Environment Variables
+Create a `.env` file in the `backend/` directory with the following keys:
+
+```ini
+# --- Database ---
+DATABASE_URL="postgresql://user:password@host:port/db?sslmode=require" # Or sqlite
+
+# --- AI Services ---
+cohere_api_key="your_cohere_key"
+GOOGLE_API_KEY="your_google_key" # If used
+
+# --- Vector Store (Chroma) ---
+# Leave these blank if using local in-memory Chroma
+CHROMA_API_KEY="" 
+CHROMA_TENANT=""
+CHROMA_DATABASE=""
+
+# --- Twilio (Emergency System) ---
+TWILIO_ACCOUNT_SID="AC..."
 TWILIO_AUTH_TOKEN="your_token"
 TWILIO_FROM_NUMBER="+1234567890"
 TWILIO_TO_NUMBER="+0987654321"
 
-# Run the Server
+# --- Hugging Face ---
+hugging_face="hf_your_token" # Required for gated models
+```
+
+### 4. Running Locally
+```bash
 uvicorn main:app --reload
 ```
-
-### 2. Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Run Development Server
-npm run dev
-```
-
-### 3. Usage
-
-1.  Open `http://localhost:5173`.
-2.  **General Chat**: Ask general questions or upload PDFs.
-3.  **MedGamma Mode**: Toggle the switch in the header.
-    - Try asking health questions.
-    - **Test Safety**: (For testing only) Type "I want to hurt myself" to see the SMS trigger (backend logs will show `⚠️ MEDIUM DISTRESS`). Type "I want to kill myself" for the Critical trigger (`🚨 CRITICAL DISTRESS`).
+API will be available at `http://localhost:8000`.
+Docs at `http://localhost:8000/docs`.
 
 ---
 
-## ⚠️ Disclaimer
-MedGamma is an AI prototype. It is **not a doctor**. Always consult professional medical personnel for health advice. The Emergency System is a demonstration feature and should not be relied upon for real-life safety without professional audit and redundant systems.
+## ☁️ Deployment (Render.com)
+
+This backend is correctly configured for deployment on Render.
+
+**Settings:**
+- **Build Command:** `pip install -r requirements.txt` (Ensure `twilio`, `transformers`, etc. are in requirements.txt)
+- **Start Command:** `uvicorn main:app --host 0.0.0.0 --port 10000`
+
+**Environment Variables:**
+Ensure all variables from your `.env` (especially `TWILIO_...` keys) are added to the Environment Variables section in your Render dashboard.
+
+### ⚠️ Note on Large Models
+If attempting to run the **MedGemma** model (4B params) on Render's free tier, it will likely OOM (Out of Memory). The `medgemma_test.py` script includes optimization for disk offloading, but standard deployment containers are ephemeral and resource-constrained.
