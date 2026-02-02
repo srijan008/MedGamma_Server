@@ -1,2 +1,7 @@
 /node_modules
 .env
+./medgemma_test.py
+.gitignore
+__pycache__/
+*.pyc
+
