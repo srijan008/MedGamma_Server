@@ -13,7 +13,10 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import traceback
 import chromadb
-from .web_helpers import run_web_search, route_query
+import chromadb
+from .tools import WebSearchTool, EmergencyCallTool, EmergencySmsTool
+from langchain_core.messages import ToolMessage
+import json
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -157,6 +160,7 @@ async def get_chat_history(chat_id: str):
 @router.post("/{chat_id}/message")
 async def send_message(chat_id: str, body: UserMessage, background_tasks: BackgroundTasks):
     try:
+        
         # 1. Save User Message
         await db.message.create(
             data={
@@ -165,6 +169,7 @@ async def send_message(chat_id: str, body: UserMessage, background_tasks: Backgr
                 "chatSessionId": chat_id
             }
         )
+        
 
         # 2. Retrieve Context (History + Summary + RAG)
         session = await db.chatsession.find_unique(
@@ -190,22 +195,14 @@ async def send_message(chat_id: str, body: UserMessage, background_tasks: Backgr
 
         sorted_messages = sorted(session.messages, key=lambda m: m.timestamp)
         recent_messages = sorted_messages[-5:] 
+        print("Context retrieved", recent_messages)
+        # 3. Available Tools
+        tools = [WebSearchTool, EmergencyCallTool, EmergencySmsTool]
+        llm_with_tools = llm.bind_tools(tools)
         
-        # Build history string for router
-        history_str = "\n".join([f"{m.sender}: {m.text}" for m in recent_messages])
-        
-        # Decide: Web Search?
-        routing_decision = await route_query(body.message, history_str)
-        print(f"🧭 Routing Decision: {routing_decision}")
-        
-        web_context = ""
-        if routing_decision == "WEB":
-            print("🌐 Performing Web Search...")
-            search_results = run_web_search(body.message)
-            print(f"🕸️ Search Results Length: {len(search_results)}")
-            if search_results:
-                web_context = f"\n\nWeb Search Results:\n{search_results}\n"
-        print("web_context", web_context)
+        # Initialize context vars
+        web_context = "" # Kept if we want to manually inject, but mostly handled by tool now
+        print(f"Context Docs: {len(context_docs)}")
         lc_messages = []
         
         # System Message
@@ -217,33 +214,22 @@ async def send_message(chat_id: str, body: UserMessage, background_tasks: Backgr
             ALWAYS include a disclaimer: "I am an AI, not a doctor. Please consult a professional for medical advice."
             
             CRITICAL INSTRUCTION:
-            If the user expresses clear intent of SUICIDE, SELF-HARM, or is in an IMMEDIATE LIFE-THREATENING EMERGENCY, you MUST:
-            1. Start your response with the exact token: "[SOS]" (with brackets).
-            2. Then, calmly urge them to call emergency services or a suicide hotline.
+            You have access to tools for Emergency situations and Web Search.
             
-            IMPORTANT DISTINCTION:
-            - "I want to hurt myself" (Self-Harm) -> Use [SOS_SMS]. (Medium Severity)
-            - "I want to kill myself" (Suicide) -> Use [SOS_CALL]. (High Severity/Critical)
-            - "I am stressed/anxious" -> NO TOKEN. Supportive response only.
-
-            EXAMPLES:
-            User: "I am so stressed."
-            AI: "I hear you. Have you tried deep breathing?" (NO SOS)
+            1. **Emergency**: If the user expresses CLEAR INTENT of SUICIDE ("I want to kill myself") or IMMEDIATE LIFE-THREAT ("I am bleeding out"), 
+               you MUST call the `EmergencyCallTool`.
+               If they express self-harm ("I might cut myself") but not immediate death, call `EmergencySmsTool`.
+               If they are just stressed, anxious, or down, DO NOT call any tool. Provide support.
             
-            User: "I want to hurt myself. I might cut my arm."
-            AI: "[SOS_SMS] Please don't. You are valuable. Reach out to a friend." (SMS Only)
-
-            User: "I am going to kill myself now. Goodbye."
-            AI: "[SOS_CALL] PLEASE STOP. Call 911 immediately. We are here for you." (Call + SMS)
-
+            2. **Information**: If the user asks about current events, news, or facts you don't know, call `WebSearchTool`.
+            
             Keep your answers concise, professional, and supportive.
             """
             
         if session.summary:
             system_text += f"\n\nContext Summary of previous conversation:\n{session.summary}"
         
-        if web_context:
-            system_text += f"{web_context}\n\nUse the Web Search Results to answer the user's question if it requires up-to-date information."
+
 
         if rag_context:
             system_text += f"{rag_context}\n\nAnswer using the provided document excerpts if relevant."
@@ -257,80 +243,83 @@ async def send_message(chat_id: str, body: UserMessage, background_tasks: Backgr
                 lc_messages.append(AIMessage(content=msg.text))
         
         async def response_generator():
-            full_response_raw = ""
-            full_response_clean = ""
-            buffer = ""
-            checked_for_token = False
-            
             try:
-                # LLM Stream
-                for chunk in llm.stream(lc_messages):
-                    content = chunk.content
-                    if not content: continue
-                    
-                    full_response_raw += content
-                    
-                    if not checked_for_token:
-                        buffer += content
-                        # Check if buffer has enough chars (longest token is [SOS_CALL] = 10 chars)
-                        if len(buffer) > 15 or "]" in buffer:
-                            # Strip known tokens
-                            clean_buffer = buffer.replace("[SOS_CALL]", "").replace("[SOS_SMS]", "").replace("[SOS]", "").lstrip()
-                            
-                            full_response_clean += clean_buffer
-                            yield clean_buffer
-                            
-                            buffer = ""
-                            checked_for_token = True
-                    else:
-                        full_response_clean += content
-                        yield content
+                # Initial Invocation
+                # Note: Streaming with tools in LangChain can be tricky.
+                # We will loop: stream -> if tool_calls -> execute -> stream again
                 
-                # Yield any remaining buffer if stream ended early
-                if buffer:
-                   clean_buffer = buffer.replace("[SOS_CALL]", "").replace("[SOS_SMS]", "").replace("[SOS]", "").lstrip()
-                   full_response_clean += clean_buffer
-                   yield clean_buffer
-
-                # After stream finishes, save CLEANED message to DB
-                print("✅ Stream finished. Saving to DB...")
+                final_answer_accumulated = ""
+                
+                # We need to manually manage the loop because `stream` essentially gives us chunks
+                # and if a chunk indicates a tool call, we need to gather the full call, execute, and recurse.
+                # Simplified approach: Use `invoke` for tool logic steps, and `stream` ONLY for final response?
+                # OR: Standard ReAct loop.
+                
+                # Let's try a simpler approach compatible with streaming:
+                # 1. Invoke with tools. 2. If valid response, yield. 3. If tool call, execute and re-invoke.
+                
+                current_messages = lc_messages.copy()
+                
+                # Step 1: Get Initial Response (possibly tool call)
+                response = llm_with_tools.invoke(current_messages)
+                
+                # Loop to resolve all tool calls first
+                # We use .invoke() here to effectively "think" and decide on tools.
+                # If a tool is called, we execute it, append the result, and loop again.
+                # We discard the text content from these intermediate steps because we want
+                # to stream the FINAL answer freshly after all context is gathered.
+                for _ in range(3):
+                    if response.tool_calls:
+                        # Append the AIMessage *once* with all tool calls
+                        current_messages.append(response)
+                        
+                        for tool_call in response.tool_calls:
+                            print(f"🔧 Tool Call: {tool_call['name']}: {tool_call['args']}")
+                            
+                            tool_result_content = ""
+                            try:
+                                if tool_call["name"] == "WebSearchTool":
+                                    tool_result_content = WebSearchTool.invoke(tool_call["args"])
+                                elif tool_call["name"] == "EmergencyCallTool":
+                                    tool_result_content = EmergencyCallTool.invoke(tool_call["args"])
+                                elif tool_call["name"] == "EmergencySmsTool":
+                                    tool_result_content = EmergencySmsTool.invoke(tool_call["args"])
+                            except Exception as e:
+                                tool_result_content = f"Error executing tool: {str(e)}"
+                                
+                            print(f"✅ Tool Result: {tool_result_content[:50]}...")
+                            
+                            # Append Tool Result
+                            current_messages.append(ToolMessage(content=tool_result_content, tool_call_id=tool_call["id"]))
+                        
+                        # Get next response (continue thinking with new context)
+                        response = llm_with_tools.invoke(current_messages)
+                        
+                    else:
+                        # No more tools, we have the final logic state.
+                        # We break here and proceed to stream the final answer below.
+                        break
+                
+                # Now that all tools are resolved and context is full, 
+                # we stream the FINAL answer to the user.
+                async for chunk in llm_with_tools.astream(current_messages):
+                    content = chunk.content
+                    if content:
+                        final_answer_accumulated += content
+                        yield content
+                        
+                # Save to DB
+                print("✅ Conversation turn finished. Saving.")
                 await db.message.create(
                     data={
-                        "text": full_response_clean,
+                        "text": final_answer_accumulated,
                         "sender": "bot",
                         "chatSessionId": chat_id
                     }
                 )
-
-                # Use RAW response for trigger logic
-                full_response = full_response_raw
-
-                # --- AI DISTRESS DETECTION ---
-                from .emergency import trigger_emergency, EmergencyRequest
                 
-                if "[SOS_CALL]" in full_response:
-                    print("🚨 CRITICAL DISTRESS (CALL+SMS): Triggering Emergency...")
-                    request = EmergencyRequest(type="sos", severity="critical", location="High Risk Detected via Chat")
-                    background_tasks.add_task(trigger_emergency, request)
-                    
-                elif "[SOS_SMS]" in full_response:
-                    print("⚠️ MEDIUM DISTRESS (SMS ONLY): Triggering Alert...")
-                    request = EmergencyRequest(type="sos", severity="medium", location="Medium Risk Detected via Chat")
-                    background_tasks.add_task(trigger_emergency, request)
-                
-                # Handling legacy cases just in case
-                elif "[SOS]" in full_response:
-                    print("🚨 LEGACY DISTRESS: Triggering Critical...")
-                    request = EmergencyRequest(type="sos", severity="critical", location="Crisis Detected")
-                    background_tasks.add_task(trigger_emergency, request)
-                
-                # Trigger summary update (manually calling logic or using a separate non-background task approach since background_tasks might run early)
-                # Background tasks in FastAPI run after response is sent.
-                # Since we are streaming, we can't easily attach BackgroundTask to StreamingResponse in a standard way that guarantees execution order relative to stream end inside the generator.
-                # So we just run it here (awaiting might delay logic, but it's background for user perspective since stream is done).
-                # Actually, better to fire-and-forget or await quick update.
                 await update_summary(chat_id)
-                
+
             except Exception as e:
                 print(f"🔥 Error during stream: {e}")
                 traceback.print_exc()
