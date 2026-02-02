@@ -1,7 +1,9 @@
 fastapi
 uvicorn
 python-multipart
-# uuid is built-in, but python-uuid or shortuuid exists. Usually not needed for stdlib-uuid unless specific package
+# python-uuid is usually not needed for stdlib, but 'uuid' package on PyPI is usually 'python-uuid' or part of stdlib.
+# 'uuid' on PyPI is ancient and broken. 
+# Code likely uses stdlib 'import uuid'. So removing 'uuid' from requirements is safe.
 prisma
 python-dotenv
 langchain
@@ -9,10 +11,9 @@ langchain-cohere
 pypdf
 chromadb
 langchain-chroma
-duckduckgo-search>=5.0
+duckduckgo-search>=6.0
 beautifulsoup4
 requests
-# Missing from previous list:
 twilio
 huggingface-hub
 transformers
