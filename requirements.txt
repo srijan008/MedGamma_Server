@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 python-multipart
-uuid
+# uuid is built-in, but python-uuid or shortuuid exists. Usually not needed for stdlib-uuid unless specific package
 prisma
 python-dotenv
 langchain
@@ -9,6 +9,14 @@ langchain-cohere
 pypdf
 chromadb
 langchain-chroma
-ddgs
+duckduckgo-search>=5.0
 beautifulsoup4
 requests
+# Missing from previous list:
+twilio
+huggingface-hub
+transformers
+torch
+accelerate
+psutil
+bitsandbytes
