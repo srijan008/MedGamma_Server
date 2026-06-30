@@ -58,12 +58,13 @@ def run_web_search(query: str) -> str:
     try:
         print(f"🔎 Searching DDG News for: {query}")
         # Use .news() to get specific articles rather than homepages
-        results = list(DDGS().news(query, max_results=5)) 
-        
-        if not results:
-             # Fallback to text search if news fails
-             print("⚠️ No news results, falling back to text search...")
-             results = list(DDGS().text(query, max_results=5))
+        with DDGS(timeout=20) as ddgs:
+            results = list(ddgs.news(query, max_results=5)) 
+            
+            if not results:
+                 # Fallback to text search if news fails
+                 print("⚠️ No news results, falling back to text search...")
+                 results = list(ddgs.text(query, max_results=5, backend="lite"))
              
         if not results:
             return ""

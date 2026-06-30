@@ -11,7 +11,7 @@ langchain-cohere
 pypdf
 chromadb
 langchain-chroma
-duckduckgo-search>=6.0
+ddgs
 beautifulsoup4
 requests
 twilio
