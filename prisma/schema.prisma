@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-py"
+  interface = "asyncio"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ChatSession {
+  id        String    @id @default(uuid())
+  createdAt DateTime  @default(now())
+  summary   String?
+  messages  Message[]
+}
+
+model Message {
+  id            String      @id @default(uuid())
+  text          String
+  sender        String
+  timestamp     DateTime    @default(now())
+  chatSessionId String
+  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id])
+}
